@@ -18,15 +18,6 @@ h1{font-size:20px;margin:0 0 4px;font-weight:700}
 .tabs button{flex:1;padding:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;font:inherit;cursor:pointer}
 .tabs button[aria-pressed=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 
-/* 主要車站未來兩小時發車區塊 */
-.upcoming-section{max-width:680px;margin:16px auto;padding:0 16px}
-.upcoming-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;box-shadow:0 1px 3px #0001}
-.upcoming-card h3{margin:0 0 8px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
-.upcoming-list{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.up-item{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:90px;text-align:center;flex-shrink:0;cursor:pointer}
-.up-item:hover{border-color:var(--fg)}
-.up-item .tno{font-weight:bold;font-size:14px;color:var(--orange, var(--fg))}
-.up-item .ttime{font-size:12px;color:var(--mut)}
 
 .legend{display:grid;grid-template-columns:1fr 90px 1fr;max-width:680px;margin:16px auto 0;padding:0 16px;font-size:13px;font-weight:700}
 .legend span:first-child{color:var(--north);text-align:left}.legend span:last-child{color:var(--south);text-align:right}
@@ -34,8 +25,9 @@ h1{font-size:20px;margin:0 0 4px;font-weight:700}
 #track::before{content:"";position:absolute;left:50%;top:calc(var(--row)/2);bottom:calc(120px + var(--row)/2);width:6px;margin-left:-3px;background:var(--line);border-radius:3px}
 .lane{position:relative}
 .st{height:var(--row);display:flex;align-items:center;justify-content:center;position:relative;z-index:1}
-.st b{background:var(--bg);border:2px solid var(--fg);border-radius:99px;padding:2px 10px;font-size:14px;font-weight:600}
-.st.has b{background:var(--fg);color:var(--bg)}
+.sb{background:var(--bg);color:var(--fg);border:2px solid var(--fg);border-radius:99px;padding:3px 10px;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.sb:focus-visible,#back:focus-visible,.rowb:focus-visible{outline:3px solid var(--fg);outline-offset:2px}
+.st.has .sb{background:var(--fg);color:var(--bg)}
 .tr{position:absolute;width:64px;padding:2px 4px;border:0;border-radius:10px;color:#fff;font:inherit;text-align:center;line-height:1.2;cursor:pointer;transform:translateY(-50%);box-shadow:0 1px 4px #0004;z-index:2}
 .tr.s{background:var(--south)}.tr.n{background:var(--north)}
 .tr strong{display:block;font-size:14px}.tr small{font-size:11px;opacity:.95;white-space:nowrap}
@@ -71,6 +63,12 @@ h3{font-size:14px;margin:16px 0 6px}
 .stat{display:inline-flex;align-items:center;gap:6px}
 .stat .ring{width:14px;height:14px;border:3px solid currentColor;border-radius:50%;display:inline-block}
 .stat.ok{color:var(--ok)}.stat.warn{color:var(--warn)}.stat.unk{color:var(--mut)}
+.sec{margin:16px 0 4px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px}
+.rowb{display:grid;grid-template-columns:76px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;color:var(--fg);font:inherit;padding:9px 0;cursor:pointer}
+.rowb .t small{display:block}
+.rowb.end{color:var(--mut)}
+.none{color:var(--mut);font-size:13px;padding:6px 0}
+#back{border:0;background:none;color:var(--mut);font:inherit;cursor:pointer;padding:0 0 6px}
 </style>
 </head>
 <body>
@@ -93,8 +91,6 @@ h3{font-size:14px;margin:16px 0 6px}
   <div id="qmsg" role="status"></div>
 </header>
 
-<!-- 重點車站未來兩小時發車清單 -->
-<div class="upcoming-section" id="upcomingContainer"></div>
 
 <div class="legend"><span>↑ 北上</span><span></span><span>南下 ↓</span></div>
 <main id="track" aria-live="polite"></main>
@@ -108,7 +104,7 @@ const ST=[['0990','南港'],['1000','台北'],['1010','板橋'],['1020','桃園'
 const IDX=Object.fromEntries(ST.map((s,i)=>[s[0],i]));
 const dirArrow=d=>`<i class="ar ${d?'n':'s'}" aria-hidden="true">${d?'▲':'▼'}</i>`;
 const FREE_CARS=[10,11,12]; // 自由座車廂（假設值，TDX 無此資料）
-const ROW=72, $=s=>document.querySelector(s);
+const ROW=104, $=s=>document.querySelector(s);
 let trains=[], filter='all', selNo=null;
 document.documentElement.style.setProperty('--row',ROW+'px');
 
@@ -190,57 +186,41 @@ function freeCars(t){
 }
 
 // 渲染南港、台中、左營未來 2 小時發車清單
-const UP_RULE={
-  '南港':{label:'未來新增月台資訊',test:n=>n%2===1},
-  '台中':{label:'未來新增月台資訊',test:n=>Math.floor(n/100)%10===5},
-  '左營':{label:'未來新增月台資訊',test:n=>n%2===0}
-};
-function renderUpcoming(){
-  const now=nowMin();
-  const targetStations = ['南港', '台中', '左營'];
-  const container = $('#upcomingContainer');
-  
-  let html = '';
-  targetStations.forEach(stName => {
-    // 找出該站未來 120 分鐘內的發車班次
-    const upcomingTrains = [];
-    trains.forEach(t => {
-      const matchStop = t.stops.find(s => s.name === stName);
-      if (UP_RULE[stName] && !UP_RULE[stName].test(parseInt(t.no,10)||0)) return; // 各站車次篩選
-      if (matchStop && matchStop.dep >= now && matchStop.dep <= now + 120) {
-        upcomingTrains.push({ no: t.no, dep: matchStop.dep, dir: t.dir, platform: matchStop.platform });
-      }
-    });
-    upcomingTrains.sort((a,b) => a.dep - b.dep);
-
-    html += `<div class="upcoming-card">
-      <h3>📍 ${stName}站・未來 2 小時發車${UP_RULE[stName]?'（'+UP_RULE[stName].label+'）':''} <span class="badge">${upcomingTrains.length} 班</span></h3>
-      <div class="upcoming-list">`;
-    
-    if (upcomingTrains.length === 0) {
-      html += `<div style="font-size:12px;color:var(--mut);padding:4px;">近期無發車班次</div>`;
-    } else {
-      upcomingTrains.forEach(tr => {
-        html += `<div class="up-item" onclick="openTrain('${tr.no}')">
-          <div class="tno">${dirArrow(tr.dir)}${tr.no} 次</div>
-          <div class="ttime">${fmt(tr.dep)} (${tr.dir?'北上':'南下'})</div>
-        </div>`;
-      });
-    }
-    html += `</div></div>`;
-  });
-  container.innerHTML = html;
-}
-
 function buildTrack(){
   $('#track').innerHTML='<div class="lane" id="ln"></div><div id="mid"></div><div class="lane" id="ls"></div>';
-  $('#mid').innerHTML=ST.map(x=>`<div class="st"><b>${x[1]}</b></div>`).join('');
+  $('#mid').innerHTML=ST.map(x=>`<div class="st"><button class="sb" data-i="${ST.indexOf(x)}" aria-label="${x[1]}站 未來兩小時車次">${x[1]}</button></div>`).join('');
+  document.querySelectorAll('.sb').forEach(b=>b.onclick=()=>openStation(+b.dataset.i));
 }
 
-function openTrain(trainNo){
-  selNo = trainNo;
-  drawSheet();
-  $('#sheet').classList.add('open');
+let sheetMode='train', selSt=0, fromSt=null;
+function openTrain(trainNo,from=null){
+  selNo=trainNo; sheetMode='train'; fromSt=from;
+  drawSheet(); $('#sheet').classList.add('open');
+}
+function openStation(i){
+  selSt=i; sheetMode='station'; fromSt=null;
+  drawSheet(); $('#sheet').classList.add('open');
+}
+function drawSheet(){ sheetMode==='station'?drawStation():drawTrain(); }
+function drawStation(){
+  const i=selSt, now=nowMin(), items=[];
+  trains.forEach(t=>{
+    const k=t.stops.findIndex(x=>x.i===i); if(k<0)return;
+    const s=t.stops[k], isEnd=k===t.stops.length-1, tm=isEnd?s.arr:s.dep;
+    if(tm>=now&&tm<=now+120) items.push({t,s,isEnd,tm,end:t.stops[t.stops.length-1].name});
+  });
+  const sec=dir=>{
+    const list=items.filter(x=>x.t.dir===dir).sort((a,b)=>a.tm-b.tm);
+    return`<div class="sec">${dirArrow(dir)}${dir?'北上':'南下'}<span class="badge">${list.length} 班</span></div>`+
+      (list.length?list.map(x=>`<button class="rowb${x.isEnd?' end':''}" onclick="openTrain('${x.t.no}',${i})">
+        <b>${dirArrow(dir)}${x.t.no} 次</b>
+        <span>${x.isEnd?'本站為終點':'往 '+x.end}${x.s.platform?`<span class="platform-tag">${x.s.platform}</span>`:''}</span>
+        <span class="t">${fmt(x.tm)}<small>${x.isEnd?'到站':'發車'}</small></span></button>`).join('')
+        :'<div class="none">兩小時內沒有班次</div>');
+  };
+  $('#sheetIn').innerHTML=`<div class="hd"><div><h2>${ST[i][1]}站</h2><p>現在 ${fmt(now)} 起兩小時內的車次</p></div>
+    <button id="close" aria-label="關閉">✕</button></div>`+sec(1)+sec(0);
+  $('#close').onclick=()=>$('#sheet').classList.remove('open');
 }
 
 function render(){
@@ -294,11 +274,10 @@ function render(){
     document.querySelector('.empty')?.remove();
   }
   
-  renderUpcoming();
   if($('#sheet').classList.contains('open')) drawSheet();
 }
 
-function drawSheet(){
+function drawTrain(){
   const t=trains.find(x=>x.no===selNo); if(!t)return;
   const now=nowMin(),p=locate(t,now),first=t.stops[0],last=t.stops[t.stops.length-1];
   const cur=p?p.k:-1,atStn=p&&p.at!==undefined;
@@ -308,13 +287,14 @@ function drawSheet(){
     return`<li class="${cls}"><i></i><span>${s.name}${cls==='cur'?'（停靠中）':cls==='next'?'（下一站）':''}${s.platform?`<span class="platform-tag">${s.platform}</span>`:''}</span>
       <span class="t">${last?'終點 '+fmt(s.arr):fmt(s.dep)}<small>${first?'起站發車':last?'到達':'到 '+fmt(s.arr)+' ／ 發'}</small></span></li>`}).join('');
   const cars=freeCars(t).map(c=>`<div class="car"><b>${c.c} 號車廂</b><div class="bar"><div style="width:${c.pct}%;background:${c.col}"></div></div><span>${c.txt}</span></div>`).join('');
-  $('#sheetIn').innerHTML=`<div class="hd"><div><h2>${dirArrow(t.dir)}${t.no} 次 ${t.dir?'北上':'南下'}</h2>
+  $('#sheetIn').innerHTML=`${fromSt!==null?'<button id="back">‹ 返回'+ST[fromSt][1]+'站</button>':''}<div class="hd"><div><h2>${dirArrow(t.dir)}${t.no} 次 ${t.dir?'北上':'南下'}</h2>
     <p>${first.name} ${fmt(first.dep)} → ${last.name} ${fmt(last.arr)} ${p?'目前：'+segLabel(t,p):(now<first.dep?'尚未發車':'已抵達終點')}</p></div>
     <button id="close" aria-label="關閉">✕</button></div>
     <h3>停靠站與發車時間</h3><ul class="stops">${rows}</ul>
     <h3>自由座車廂</h3><div class="cars">${cars}</div>
     <p class="note">TDX 沒有提供自由座資料；車廂與擁擠度皆為假設值，請以高鐵官方與站內公告為準。</p>`;
   $('#close').onclick=()=>$('#sheet').classList.remove('open');
+  if(fromSt!==null)$('#back').onclick=()=>openStation(fromSt);
 }
 
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{

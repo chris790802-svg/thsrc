@@ -69,6 +69,8 @@ h3{font-size:14px;margin:16px 0 6px}
 .rowb.end{color:var(--mut)}
 .none{color:var(--mut);font-size:13px;padding:6px 0}
 #back{border:0;background:none;color:var(--mut);font:inherit;cursor:pointer;padding:0 0 6px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{padding:4px 12px;border-radius:99px;border:1.5px solid var(--ok);color:var(--ok);font-weight:600;font-size:14px}
 </style>
 </head>
 <body>
@@ -103,7 +105,12 @@ const TDX='https://tdx.transportdata.tw';
 const ST=[['0990','南港'],['1000','台北'],['1010','板橋'],['1020','桃園'],['1030','新竹'],['1035','苗栗'],['1040','台中'],['1043','彰化'],['1047','雲林'],['1050','嘉義'],['1060','台南'],['1070','左營']];
 const IDX=Object.fromEntries(ST.map((s,i)=>[s[0],i]));
 const dirArrow=d=>`<i class="ar ${d?'n':'s'}" aria-hidden="true">${d?'▲':'▼'}</i>`;
-const FREE_CARS=[10,11,12]; // 自由座車廂（假設值，TDX 無此資料）
+const FREE_CARS=[10,11,12]; // 備援假設值：TDX 沒資料時才使用
+/* TDX「取得高鐵當天所有車次的自由座車廂資料」(THSRApi_DailyFreeSeatingCar)。
+   我無法讀取 swagger 頁面，路徑與欄位是推測的；若無法取得資料，請把 swagger 上 Try it out 顯示的
+   Request URL（/api/basic/ 之後的部分）貼到下面清單最前面。 */
+const FREE_URLS=['/api/basic/v2/Rail/THSR/FreeSeatingCar/Today?$format=JSON','/api/basic/v2/Rail/THSR/DailyFreeSeatingCar/Today?$format=JSON','/api/basic/v2/Rail/THSR/FreeSeatingCar?$format=JSON'];
+const freeMap=new Map(); let freeOk=false;
 const ROW=104, $=s=>document.querySelector(s);
 let trains=[], filter='all', selNo=null;
 document.documentElement.style.setProperty('--row',ROW+'px');
@@ -135,6 +142,7 @@ async function load(){
       })).filter(s=>s.i!==undefined)}});
     setSrc(true);
     loadAlert(t);
+    loadFree(t).then(()=>{if($('#sheet').classList.contains('open'))drawSheet()});
   }catch(e){console.warn('TDX 失敗，改用示範資料',e);trains=mock();setSrc(false);setOps('unk','營運狀態未確認')}
 }
 
@@ -148,6 +156,49 @@ async function loadAlert(tok){ // 營運通阻（欄位依記憶撰寫，未實�
     if(!bad.length) setOps('ok','全線正常營運');
     else setOps('warn','營運異動：'+(bad[0].Title||'請查看高鐵公告'));
   }catch(e){console.warn('AlertInfo 失敗',e);setOps('unk','營運狀態未確認')}
+}
+function parseCars(x){ // 欄位名稱不確定：從名稱含 car 的欄位找 1–12 的車廂號
+  // 「幾節自由座」這類數量欄位（如 3、4）會被誤認成車廂號，所以：排除 count/total 類欄位，
+  // 且依序優先採用 陣列/物件 → 字串("10,11,12"、"10-12") → 單一數字，前面有結果就不看後面。
+  const grab=(v,out)=>{
+    if(typeof v==='number'){if(v>=1&&v<=12)out.add(v)}
+    else if(typeof v==='string'){
+      v=v.replace(/(\d+)\s*[-~～至]\s*(\d+)/g,(m,a,b)=>{for(let c=+a;c<=+b;c++)if(c>=1&&c<=12)out.add(c);return ' '});
+      v.split(/\D+/).forEach(n=>{n=parseInt(n,10);if(n>=1&&n<=12)out.add(n)});
+    }
+    else if(Array.isArray(v))v.forEach(e=>grab(e,out));
+    else if(v&&typeof v==='object')Object.values(v).forEach(e=>grab(e,out));
+  };
+  const skip=/count|total|qty|quantity|numberof|numof|sum|length/i;
+  const tiers=[new Set(),new Set(),new Set()];
+  Object.entries(x).forEach(([k,v])=>{
+    if(!/car/i.test(k)||skip.test(k)) return;
+    grab(v,tiers[v&&typeof v==='object'?0:typeof v==='string'?1:2]);
+  });
+  const hit=tiers.find(t=>t.size);
+  return hit?[...hit].sort((a,b)=>a-b):[];
+}
+async function loadFree(tok){
+  for(const u of FREE_URLS){
+    try{
+      const r=await fetch(TDX+u,{headers:{authorization:'Bearer '+tok}});
+      if(!r.ok) continue;
+      const j=await r.json(), arr=Array.isArray(j)?j:(j.FreeSeatingCars||j.Trains||[]);
+      console.log('自由座原始資料範例（欄位對不上時請貼給我）',u,arr[0]);
+      arr.forEach(x=>{
+        const no=x.TrainNo||(x.DailyTrainInfo&&x.DailyTrainInfo.TrainNo)||(x.TrainInfo&&x.TrainInfo.TrainNo);
+        const cars=parseCars(x); if(no&&cars.length) freeMap.set(String(parseInt(no,10)),cars);
+      });
+      if(freeMap.size){freeOk=true;return}
+    }catch(e){console.warn('自由座 API 失敗',u,e)}
+  }
+}
+function freeHtml(t){
+  const real=freeMap.get(String(parseInt(t.no,10)));
+  if(real) return `<div class="chips">${real.map(c=>`<span class="chip">${c} 號車廂</span>`).join('')}</div>
+    <p class="note">資料來源：TDX 自由座車廂資料；實際開放車廂以月台公告為準。</p>`;
+  const bars=freeCars(t).map(c=>`<div class="car"><b>${c.c} 號車廂</b><div class="bar"><div style="width:${c.pct}%;background:${c.col}"></div></div><span>${c.txt}</span></div>`).join('');
+  return `<div class="cars">${bars}</div><p class="note">${freeOk?'TDX 資料中找不到本班車':'尚未取得 TDX 自由座資料'}，以上車廂與擁擠度為假設值，請以高鐵官方與站內公告為準。</p>`;
 }
 function setSrc(ok){const b=$('#src');b.textContent=ok?'TDX 時刻表':'示範資料（TDX 連線失敗）';b.className='badge '+(ok?'live':'demo')}
 function mock(){
@@ -286,13 +337,11 @@ function drawTrain(){
     const first=k===0,last=k===t.stops.length-1;
     return`<li class="${cls}"><i></i><span>${s.name}${cls==='cur'?'（停靠中）':cls==='next'?'（下一站）':''}${s.platform?`<span class="platform-tag">${s.platform}</span>`:''}</span>
       <span class="t">${last?'終點 '+fmt(s.arr):fmt(s.dep)}<small>${first?'起站發車':last?'到達':'到 '+fmt(s.arr)+' ／ 發'}</small></span></li>`}).join('');
-  const cars=freeCars(t).map(c=>`<div class="car"><b>${c.c} 號車廂</b><div class="bar"><div style="width:${c.pct}%;background:${c.col}"></div></div><span>${c.txt}</span></div>`).join('');
   $('#sheetIn').innerHTML=`${fromSt!==null?'<button id="back">‹ 返回'+ST[fromSt][1]+'站</button>':''}<div class="hd"><div><h2>${dirArrow(t.dir)}${t.no} 次 ${t.dir?'北上':'南下'}</h2>
     <p>${first.name} ${fmt(first.dep)} → ${last.name} ${fmt(last.arr)} ${p?'目前：'+segLabel(t,p):(now<first.dep?'尚未發車':'已抵達終點')}</p></div>
     <button id="close" aria-label="關閉">✕</button></div>
     <h3>停靠站與發車時間</h3><ul class="stops">${rows}</ul>
-    <h3>自由座車廂</h3><div class="cars">${cars}</div>
-    <p class="note">TDX 沒有提供自由座資料；車廂與擁擠度皆為假設值，請以高鐵官方與站內公告為準。</p>`;
+    <h3>自由座車廂</h3>${freeHtml(t)}`;
   $('#close').onclick=()=>$('#sheet').classList.remove('open');
   if(fromSt!==null)$('#back').onclick=()=>openStation(fromSt);
 }
